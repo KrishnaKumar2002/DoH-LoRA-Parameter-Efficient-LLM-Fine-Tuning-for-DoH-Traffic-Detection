@@ -24,6 +24,7 @@ from transformers import (
 logger = logging.getLogger(__name__)
 
 from .config import Config
+from .turboquant import create_turboquant_adapter
 from .utils import build_prompt
 
 
@@ -216,6 +217,12 @@ def save_adapter(model, tokenizer, output_dir: Path) -> float:
 
     model.save_pretrained(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))
+
+    if Config.USE_TURBOQUANT:
+        turboquant_size_mb = create_turboquant_adapter(model.state_dict(), output_dir / "turboquant")
+        logger.info(f"TurboQuant adapter saved ({turboquant_size_mb:.2f} MB)")
+    else:
+        turboquant_size_mb = 0.0
 
     # Calculate directory size
     size_mb = sum(f.stat().st_size for f in output_dir.rglob("*") if f.is_file()) / 1e6

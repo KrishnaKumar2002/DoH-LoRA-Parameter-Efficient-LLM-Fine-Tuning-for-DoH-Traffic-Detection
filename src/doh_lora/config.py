@@ -90,6 +90,12 @@ class Config:
     USE_CACHE_EVAL: bool = True
     CUDNN_BENCHMARK: bool = True
 
+    # ============ TURBOQUANT COMPRESSION ============
+    USE_TURBOQUANT: bool = True
+    TURBOQUANT_BITS: int = 4
+    TURBOQUANT_RESIDUAL_BITS: int = 1
+    TURBOQUANT_BLOCK_SIZE: int = 256
+
     @classmethod
     def ensure_dirs(cls) -> None:
         """Create all required directories if they don't exist."""
