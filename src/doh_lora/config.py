@@ -31,7 +31,7 @@ class Config:
     BATCH_SIZE: int = 1
     GRAD_ACCUM: int = 8
     LEARNING_RATE: float = 2e-4
-    EPOCHS: int = 8
+    EPOCHS: int = 1  # Reduced to 1 epoch for CPU performance (was 8 for GPU)
     WARMUP_RATIO: float = 0.03
     LR_SCHEDULER: str = "cosine"
     WEIGHT_DECAY: float = 0.0

@@ -85,19 +85,22 @@ class DoHLoRAWorkflow:
         self.print_banner("📦 Installing Dependencies")
         
         logger.info("Installing core dependencies...")
+        
+        # Try pip directly (should be in PATH and properly configured)
         if not self.run_command(
-            f"{sys.executable} -m pip install -q -r requirements.txt",
+            'pip install -q -r requirements.txt',
             description="Installing packages from requirements.txt..."
         ):
             logger.warning("Some packages may have failed to install")
         
         logger.info("\nInstalling optional dependencies...")
         self.run_command(
-            f"{sys.executable} -m pip install -q bitsandbytes==0.41.3",
+            'pip install -q bitsandbytes==0.41.3',
             description="Installing bitsandbytes for 8-bit quantization..."
         )
         
         logger.info("\n✓ Dependencies installed!")
+        return True
     
     def run_finetuning(self):
         """Run the fine-tuning pipeline."""
@@ -170,6 +173,7 @@ class DoHLoRAWorkflow:
         
         logger.info(report_text)
         logger.info(f"\nReport saved to: {report_file.relative_to(self.project_root)}")
+        return True
     
     def prompt_for_push(self):
         """Ask user if they want to push to GitHub."""
