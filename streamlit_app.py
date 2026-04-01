@@ -6,12 +6,22 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import streamlit as st
 import torch
-from peft import PeftModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from importlib import metadata
 
 from src.doh_lora.config import Config
 from src.doh_lora.data import read_and_clean, select_numeric_features
 from src.doh_lora.evaluation import predict_single_label
+
+
+def get_runtime_versions() -> Dict[str, str]:
+    """Read installed package versions without importing heavy modules."""
+    versions = {}
+    for pkg in ("transformers", "peft", "torch", "streamlit"):
+        try:
+            versions[pkg] = metadata.version(pkg)
+        except metadata.PackageNotFoundError:
+            versions[pkg] = "not-installed"
+    return versions
 
 
 @st.cache_resource(show_spinner=False)
@@ -19,6 +29,19 @@ def load_model_with_adapter(adapter_dir: str):
     adapter_path = Path(adapter_dir)
     if not adapter_path.exists():
         raise FileNotFoundError(f"Adapter directory not found: {adapter_path}")
+
+    # Lazy import to provide a clear runtime error in Streamlit deployments.
+    try:
+        from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+    except Exception as exc:
+        versions = get_runtime_versions()
+        raise RuntimeError(
+            "Dependency mismatch while importing PEFT/Transformers. "
+            "Pin compatible versions in requirements.txt and rebuild deployment. "
+            f"Detected versions: {versions}. "
+            f"Original import error: {exc}"
+        ) from exc
 
     tokenizer = AutoTokenizer.from_pretrained(str(adapter_path), use_fast=True)
     if tokenizer.pad_token is None:
@@ -90,6 +113,7 @@ def main() -> None:
         st.divider()
         st.write(f"Device: `{Config.DEVICE}`")
         st.write(f"Base model: `{Config.BASE_MODEL}`")
+        st.caption(f"Runtime versions: {get_runtime_versions()}")
 
     tab1, tab2, tab3 = st.tabs(
         ["Stage 1 (DoH)", "Stage 2 (Malicious)", "Complete Two-Stage Flow"]
