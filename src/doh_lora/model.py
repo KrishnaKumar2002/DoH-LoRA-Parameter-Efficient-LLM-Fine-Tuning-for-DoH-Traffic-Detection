@@ -1,8 +1,11 @@
 """
 Model building, training, and inference functions.
+
+Includes efficient quantization techniques for memory-optimized fine-tuning.
 """
 
 import gc
+import logging
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -12,10 +15,13 @@ from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
+    BitsAndBytesConfig,
     Trainer,
     TrainingArguments,
     default_data_collator,
 )
+
+logger = logging.getLogger(__name__)
 
 from .config import Config
 from .utils import build_prompt
@@ -25,14 +31,19 @@ def build_model_and_tokenizer(
     model_name: str = Config.BASE_MODEL,
     device: str = Config.DEVICE,
     dtype: torch.dtype = Config.DTYPE,
+    use_8bit_quantization: bool = True,
 ) -> Tuple:
     """
-    Build and configure model with LoRA adapter.
+    Build and configure model with LoRA adapter and optional quantization.
+
+    Supports 8-bit quantization for memory-efficient fine-tuning on GPUs.
+    Inspired by efficient quantization techniques (TurboQuant-style compression).
 
     Args:
         model_name: HuggingFace model identifier
         device: Device to load model on ('cuda' or 'cpu')
         dtype: Torch data type (float16 or float32)
+        use_8bit_quantization: Whether to use 8-bit quantization (GPU only)
 
     Returns:
         Tuple of (model, tokenizer)
@@ -42,11 +53,36 @@ def build_model_and_tokenizer(
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = Config.PADDING_SIDE
 
-    # Load base model
+    # Prepare quantization config if on GPU
+    quantization_config = None
+    load_in_8bit = False
+    
+    if use_8bit_quantization and device == "cuda":
+        try:
+            import bitsandbytes
+            quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=6.0,
+                llm_int8_has_fp16_weight=False,
+            )
+            load_in_8bit = True
+            logger.info("8-bit quantization enabled for memory efficiency")
+        except ImportError:
+            logger.warning("bitsandbytes not available, falling back to full precision")
+
+    # Load base model with optional quantization
+    model_kwargs = {
+        "low_cpu_mem_usage": True,
+    }
+    
+    if load_in_8bit:
+        model_kwargs["quantization_config"] = quantization_config
+    else:
+        model_kwargs["torch_dtype"] = dtype
+
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=dtype,
-        low_cpu_mem_usage=True,
+        **model_kwargs,
     )
 
     # Configure for training
@@ -65,7 +101,9 @@ def build_model_and_tokenizer(
     )
 
     model = get_peft_model(model, lora_config)
-    model.to(device)
+    
+    if device == "cuda" and not load_in_8bit:
+        model.to(device)
 
     return model, tokenizer
 
