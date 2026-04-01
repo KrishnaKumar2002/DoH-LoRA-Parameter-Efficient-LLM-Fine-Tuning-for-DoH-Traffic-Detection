@@ -196,6 +196,19 @@ export LOG_LEVEL="INFO"
 python -m src.doh_lora.main
 ```
 
+### Run Streamlit Testing Frontend
+
+Use the Streamlit UI to test your fine-tuned models with dropdown samples (20 rows).
+
+```bash
+streamlit run streamlit_app.py
+```
+
+In the app:
+- `Stage 1 (DoH)` tab: pick a sample from first-layer dataset and predict `doh` / `not_doh`.
+- `Stage 2 (Malicious)` tab: pick a sample from second-layer dataset and predict `malicious` / `benign`.
+- `Complete Two-Stage Flow` tab: run stage-1 then stage-2 automatically (stage-2 runs only if stage-1 predicts `doh`).
+
 ### Using as a Module
 
 ```python
