@@ -166,6 +166,7 @@ GRAD_ACCUM = 8
 ```python
 MAX_NEW_TOKENS = 4
 BATCH_SIZE_EVAL = 8
+INFERENCE_STRATEGY = "label_scoring"  # Recommended for binary class tasks
 ```
 
 ### TurboQuant Adapter Compression
