@@ -1,138 +1,179 @@
-"""TurboQuant-inspired compression utilities for DoH-LoRA.
+"""TurboQuant-style adapter compression for LoRA weights.
 
-This module implements a lightweight adaptation of the TurboQuant concepts:
-- polar quantization (randomized vector rotation + scalar quantization)
-- QJL residual correction (1-bit refining of post-quantization error)
-
-NOTE: This is an approximation for experimental usage in the existing codebase.
+The implementation follows a practical two-stage flow:
+1) PolarQuant-like stage:
+   - deterministic random permutation ("rotation") per tensor
+   - blockwise symmetric quantization
+2) QJL-like residual stage:
+   - 1-bit residual sign correction with per-block amplitude
 """
 
+import json
+import re
+from hashlib import sha256
 from pathlib import Path
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
 
 from .config import Config
 
-
-def _random_rotation(x: np.ndarray) -> np.ndarray:
-    """Apply a randomized orthogonal-like transform for PolarQuant."""
-    # Random sign-flip / permute transform avoids heavy QR decomposition costs.
-    if x.ndim == 1:
-        perm = np.random.permutation(x.shape[0])
-        return x[perm], perm
-
-    # For non-1D, reshape into vector first
-    flat = x.reshape(-1)
-    perm = np.random.permutation(flat.shape[0])
-    return flat[perm], perm
+_KEY_CLEAN_RE = re.compile(r"[^A-Za-z0-9_]+")
 
 
-def _inverse_random_rotation(rotated: np.ndarray, perm: np.ndarray, shape):
-    if rotated.ndim == 1:
-        inv = np.empty_like(rotated)
-        inv[perm] = rotated
-        return inv.reshape(shape)
-    flat = rotated.reshape(-1)
-    inv = np.empty_like(flat)
-    inv[perm] = flat
-    return inv.reshape(shape)
+def _to_safe_key(name: str) -> str:
+    return _KEY_CLEAN_RE.sub("_", name)
 
 
-def polar_quantize_tensor(tensor: torch.Tensor, bits: int = 4):
-    """Apply PolarQuant-style quantization to one tensor."""
-    np_tensor = tensor.detach().cpu().numpy().astype(np.float32)
-    shape = np_tensor.shape
-    flat = np_tensor.flatten()
-
-    # 1) random rotation (cheap version via permutation)
-    rotated, perm = _random_rotation(flat)
-
-    # 2) uniform quantization in [-1,1] range with scaling
-    max_val = np.max(np.abs(rotated)) + 1e-12
-    scale = max_val / (2 ** (bits - 1) - 1)
-    q = np.round(rotated / scale).astype(np.int32)
-    q = np.clip(q, -(2 ** (bits - 1) - 1), (2 ** (bits - 1) - 1))
-
-    # dequantize to recover high quality signal
-    dq = (q.astype(np.float32) * scale)
-    dq_inv = _inverse_random_rotation(dq, perm, shape)
-
-    return {
-        "shape": shape,
-        "perm": perm,
-        "scale": float(scale),
-        "quantized": q.reshape(shape),
-        "recovered": dq_inv,
-        "original_mean": float(np.mean(np_tensor)),
-    }
+def _seed_from_name(name: str, base_seed: int) -> int:
+    digest = sha256(f"{base_seed}:{name}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "little", signed=False)
 
 
-def qjl_residual_correction(original: np.ndarray, recovered: np.ndarray, residual_bits: int = 1):
-    """Apply a 1-bit QJL-style residual correction on the error."""
-    error = original - recovered
-    # 1-bit sign of error for each element as a compact residual map
-    sign = np.sign(error).astype(np.int8)
-
-    if residual_bits == 1:
-        return sign
-
-    # For >1 bits, simply store scaled error for demonstration.
-    magnitude = np.round((np.abs(error) / np.max(np.abs(error) + 1e-12)) * ((2 ** residual_bits) - 1)).astype(np.int32)
-    return magnitude
+def _make_perm(length: int, name: str, base_seed: int) -> np.ndarray:
+    rng = np.random.default_rng(_seed_from_name(name, base_seed))
+    return rng.permutation(length).astype(np.int64)
 
 
-def create_turboquant_adapter(state_dict: dict, output_dir: Path):
-    """Compress LoRA adapter tensors from state_dict and save TurboQuant payload."""
+def _apply_perm(x: np.ndarray, perm: np.ndarray) -> np.ndarray:
+    return x[perm]
+
+
+def _inverse_perm(x: np.ndarray, perm: np.ndarray) -> np.ndarray:
+    restored = np.empty_like(x)
+    restored[perm] = x
+    return restored
+
+
+def _quantize_blocks(rotated: np.ndarray, bits: int, block_size: int) -> Tuple[np.ndarray, np.ndarray]:
+    levels = (2 ** (bits - 1)) - 1
+    q = np.empty_like(rotated, dtype=np.int16 if bits <= 8 else np.int32)
+    scales = []
+    for start in range(0, rotated.size, block_size):
+        end = min(start + block_size, rotated.size)
+        block = rotated[start:end]
+        max_abs = float(np.max(np.abs(block))) if block.size else 0.0
+        scale = max(max_abs / max(levels, 1), 1e-12)
+        q_block = np.round(block / scale).astype(np.int32)
+        q_block = np.clip(q_block, -levels, levels)
+        q[start:end] = q_block.astype(q.dtype)
+        scales.append(scale)
+    return q, np.asarray(scales, dtype=np.float32)
+
+
+def _dequantize_blocks(q: np.ndarray, scales: np.ndarray, block_size: int) -> np.ndarray:
+    out = np.empty(q.shape[0], dtype=np.float32)
+    for i, start in enumerate(range(0, q.size, block_size)):
+        end = min(start + block_size, q.size)
+        out[start:end] = q[start:end].astype(np.float32) * scales[i]
+    return out
+
+
+def _qjl_residual(original: np.ndarray, recovered: np.ndarray, block_size: int) -> Tuple[np.ndarray, np.ndarray]:
+    err = original - recovered
+    sign = (err >= 0).astype(np.uint8)  # 1-bit conceptual representation
+    amp = []
+    for start in range(0, err.size, block_size):
+        end = min(start + block_size, err.size)
+        block = np.abs(err[start:end])
+        amp.append(float(np.mean(block)) if block.size else 0.0)
+    return sign, np.asarray(amp, dtype=np.float32)
+
+
+def _apply_qjl_residual(recovered: np.ndarray, sign: np.ndarray, amp: np.ndarray, block_size: int) -> np.ndarray:
+    corrected = recovered.copy()
+    for i, start in enumerate(range(0, corrected.size, block_size)):
+        end = min(start + block_size, corrected.size)
+        s = np.where(sign[start:end] > 0, 1.0, -1.0).astype(np.float32)
+        corrected[start:end] += s * amp[i]
+    return corrected
+
+
+def create_turboquant_adapter(state_dict: Dict[str, torch.Tensor], output_dir: Path) -> float:
+    """Compress LoRA tensors and persist TurboQuant payload.
+
+    Returns:
+        Compressed file size in MB.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    npz_path = output_dir / "turboquant_adapter.npz"
+    report_path = output_dir / "turboquant_report.json"
 
-    payload = {}
+    pack = {}
+    index = []
+    total_original_bytes = 0
+
     for key, value in state_dict.items():
         if "lora" not in key and "adapter" not in key:
             continue
+        arr = value.detach().cpu().float().numpy().reshape(-1).astype(np.float32)
+        if arr.size == 0:
+            continue
 
-        tensor = value.detach().cpu()
-        quant_meta = polar_quantize_tensor(tensor, bits=Config.TURBOQUANT_BITS)
-        residual = qjl_residual_correction(tensor.cpu().numpy(), quant_meta["recovered"], residual_bits=Config.TURBOQUANT_RESIDUAL_BITS)
+        safe = _to_safe_key(key)
+        perm = _make_perm(arr.size, key, Config.TURBOQUANT_SEED)
+        rotated = _apply_perm(arr, perm)
+        q, scales = _quantize_blocks(rotated, Config.TURBOQUANT_BITS, Config.TURBOQUANT_BLOCK_SIZE)
 
-        payload[key] = {
-            "quantized": quant_meta["quantized"],
-            "perm": quant_meta["perm"],
-            "scale": quant_meta["scale"],
-            "residual": residual,
-            "shape": quant_meta["shape"],
-        }
+        recovered_rot = _dequantize_blocks(q, scales, Config.TURBOQUANT_BLOCK_SIZE)
+        recovered = _inverse_perm(recovered_rot, perm)
+        sign, amp = _qjl_residual(arr, recovered, Config.TURBOQUANT_BLOCK_SIZE)
 
-    # Save as npz (fast and inspectable)
-    file_path = output_dir / "turboquant_adapter.npz"
-    np.savez_compressed(file_path, **payload)
+        pack[f"{safe}__q"] = q
+        pack[f"{safe}__perm"] = perm
+        pack[f"{safe}__scales"] = scales
+        pack[f"{safe}__sign"] = sign
+        pack[f"{safe}__amp"] = amp
+        pack[f"{safe}__shape"] = np.asarray(value.shape, dtype=np.int64)
+        pack[f"{safe}__dtype"] = np.asarray([str(value.dtype)], dtype=object)
 
-    return float(file_path.stat().st_size) / 1024 / 1024
+        total_original_bytes += int(value.numel() * value.element_size())
+        index.append({"name": key, "safe": safe})
+
+    if not index:
+        return 0.0
+
+    pack["__index__"] = np.asarray(index, dtype=object)
+    np.savez_compressed(npz_path, **pack)
+
+    compressed_bytes = npz_path.stat().st_size
+    report = {
+        "enabled": True,
+        "bits": Config.TURBOQUANT_BITS,
+        "residual_bits": Config.TURBOQUANT_RESIDUAL_BITS,
+        "block_size": Config.TURBOQUANT_BLOCK_SIZE,
+        "seed": Config.TURBOQUANT_SEED,
+        "tensors": len(index),
+        "original_size_mb": round(total_original_bytes / 1e6, 6),
+        "compressed_size_mb": round(compressed_bytes / 1e6, 6),
+        "compression_ratio": round((total_original_bytes / max(compressed_bytes, 1)), 4),
+    }
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return float(compressed_bytes) / 1024.0 / 1024.0
 
 
-def decompress_turboquant_adapter(npz_path: Path):
-    """Decompress TurboQuant adapter file back to PyTorch tensors."""
-    npz_path = Path(npz_path)
-    container = np.load(npz_path, allow_pickle=True)
-    restored = {}
+def decompress_turboquant_adapter(npz_path: Path) -> Dict[str, torch.Tensor]:
+    """Restore tensors from TurboQuant compressed adapter."""
+    container = np.load(Path(npz_path), allow_pickle=True)
+    index = container["__index__"].tolist()
+    restored: Dict[str, torch.Tensor] = {}
 
-    for key in container.files:
-        entry = container[key].tolist() if hasattr(container[key], "tolist") else container[key]
-        q = entry["quantized"].astype(np.float32)
-        scale = entry["scale"]
-        perm = entry["perm"]
-        resid = entry["residual"]
-        shape = tuple(entry["shape"])
+    for entry in index:
+        name = entry["name"]
+        safe = entry["safe"]
+        q = container[f"{safe}__q"]
+        perm = container[f"{safe}__perm"]
+        scales = container[f"{safe}__scales"]
+        sign = container[f"{safe}__sign"]
+        amp = container[f"{safe}__amp"]
+        shape = tuple(int(x) for x in container[f"{safe}__shape"].tolist())
 
-        # dequantize
-        deq = q * scale
-        deq_inv = _inverse_random_rotation(deq.flatten(), perm, shape)
+        recovered_rot = _dequantize_blocks(q, scales, Config.TURBOQUANT_BLOCK_SIZE)
+        recovered = _inverse_perm(recovered_rot, perm)
+        corrected = _apply_qjl_residual(recovered, sign, amp, Config.TURBOQUANT_BLOCK_SIZE)
 
-        if isinstance(resid, np.ndarray):
-            if resid.dtype == np.int8:
-                deq_inv += resid * (scale / 2)
-
-        restored[key] = torch.from_numpy(deq_inv).to(torch.float32)
+        restored[name] = torch.from_numpy(corrected.reshape(shape)).to(torch.float32)
 
     return restored

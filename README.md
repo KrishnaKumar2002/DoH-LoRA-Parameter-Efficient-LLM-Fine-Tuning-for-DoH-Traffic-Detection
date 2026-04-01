@@ -168,6 +168,16 @@ MAX_NEW_TOKENS = 4
 BATCH_SIZE_EVAL = 8
 ```
 
+### TurboQuant Adapter Compression
+
+```python
+USE_TURBOQUANT = True
+TURBOQUANT_BITS = 4          # Main PolarQuant-style precision
+TURBOQUANT_RESIDUAL_BITS = 1 # QJL-style residual sign correction
+TURBOQUANT_BLOCK_SIZE = 256  # Blockwise quantization granularity
+TURBOQUANT_SEED = 42         # Deterministic per-tensor random rotation
+```
+
 ### Paths (Environment-based)
 
 ```bash
@@ -253,6 +263,9 @@ results/
 └── stage2_malicious_detection/adapter/
     ├── adapter_config.json
     ├── adapter_model.bin
+    ├── turboquant/
+    │   ├── turboquant_adapter.npz
+    │   └── turboquant_report.json
     └── tokenizer files...
 ```
 
