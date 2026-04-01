@@ -210,6 +210,20 @@ In the app:
 - `Stage 2 (Malicious)` tab: pick a sample from second-layer dataset and predict `malicious` / `benign`.
 - `Complete Two-Stage Flow` tab: run stage-1 then stage-2 automatically (stage-2 runs only if stage-1 predicts `doh`).
 
+If deployment shows `cannot import name 'EncoderDecoderCache' from 'transformers'`, it is a
+dependency mismatch between `peft` and `transformers`. Rebuild with:
+
+```bash
+python -m pip install --upgrade --force-reinstall "transformers==4.45.0" "peft==0.14.0"
+python -m pip install -r requirements.txt
+```
+
+For local runs, prefer:
+
+```bash
+python -m streamlit run streamlit_app.py
+```
+
 ### Using as a Module
 
 ```python
