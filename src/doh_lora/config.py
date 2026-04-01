@@ -95,6 +95,7 @@ class Config:
     TURBOQUANT_BITS: int = 4
     TURBOQUANT_RESIDUAL_BITS: int = 1
     TURBOQUANT_BLOCK_SIZE: int = 256
+    TURBOQUANT_SEED: int = SEED
 
     @classmethod
     def ensure_dirs(cls) -> None:
@@ -116,4 +117,7 @@ class Config:
             "lora_r": cls.LORA_R,
             "lora_alpha": cls.LORA_ALPHA,
             "seed": cls.SEED,
+            "turboquant": cls.USE_TURBOQUANT,
+            "turboquant_bits": cls.TURBOQUANT_BITS,
+            "turboquant_block_size": cls.TURBOQUANT_BLOCK_SIZE,
         }
