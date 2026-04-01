@@ -11,6 +11,7 @@ setup(
     name="doh-lora",
     version="1.0.0",
     author="Krishna Kumar M",
+    author_email="cmkkcse@gmail.com",
     description="Parameter-Efficient LLM Fine-Tuning for DNS-over-HTTPS Traffic Detection",
     long_description=long_description,
     long_description_content_type="text/markdown",
