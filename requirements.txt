@@ -19,6 +19,7 @@ seaborn>=0.13.0
 # Utilities
 python-dotenv>=1.0.0
 tqdm>=4.65.0
+streamlit>=1.36.0
 
 # Development (optional)
 black>=24.0.0
