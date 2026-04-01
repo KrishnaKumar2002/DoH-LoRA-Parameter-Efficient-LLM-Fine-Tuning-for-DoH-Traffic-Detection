@@ -46,6 +46,7 @@ class Config:
     BATCH_SIZE_EVAL: int = 8
     NUM_BEAMS: int = 1
     DO_SAMPLE: bool = False
+    INFERENCE_STRATEGY: str = "label_scoring"  # "label_scoring" or "generate"
 
     # ============ DATA ============
     TEST_SIZE: float = 0.2
@@ -117,6 +118,7 @@ class Config:
             "lora_r": cls.LORA_R,
             "lora_alpha": cls.LORA_ALPHA,
             "seed": cls.SEED,
+            "inference_strategy": cls.INFERENCE_STRATEGY,
             "turboquant": cls.USE_TURBOQUANT,
             "turboquant_bits": cls.TURBOQUANT_BITS,
             "turboquant_block_size": cls.TURBOQUANT_BLOCK_SIZE,

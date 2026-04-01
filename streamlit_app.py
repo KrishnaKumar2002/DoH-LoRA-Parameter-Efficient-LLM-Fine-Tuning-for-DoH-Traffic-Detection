@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.doh_lora.config import Config
 from src.doh_lora.data import read_and_clean, select_numeric_features
-from src.doh_lora.utils import build_prompt, parse_prediction
+from src.doh_lora.evaluation import predict_single_label
 
 
 @st.cache_resource(show_spinner=False)
@@ -44,34 +44,17 @@ def predict_label(
     task_name: str,
     classes: List[str],
 ) -> Tuple[str, str]:
-    prompt = build_prompt(
+    pred, score_map = predict_single_label(
+        model=model,
+        tokenizer=tokenizer,
         row=row,
         feature_cols=feature_cols,
         task_name=task_name,
         classes=classes,
-        target_value=None,
+        device=Config.DEVICE,
     )
-
-    inputs = tokenizer(
-        prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=Config.MAX_LENGTH,
-    ).to(Config.DEVICE)
-
-    in_len = inputs["input_ids"].shape[1]
-    with torch.no_grad():
-        with torch.cuda.amp.autocast(enabled=(Config.DEVICE == "cuda")):
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=Config.MAX_NEW_TOKENS,
-                do_sample=Config.DO_SAMPLE,
-                use_cache=Config.USE_CACHE_EVAL,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-    generated = tokenizer.decode(outputs[0][in_len:], skip_special_tokens=True)
-    pred = parse_prediction(generated, classes)
-    return pred, generated.strip()
+    details = " | ".join([f"{k}: {v:.4f}" for k, v in score_map.items()])
+    return pred, details
 
 
 def load_samples(csv_path: str, target_col: str, sample_size: int = 20) -> pd.DataFrame:
@@ -145,7 +128,7 @@ def main() -> None:
             )
             st.success(f"Predicted: **{pred}**")
             st.write(f"Ground truth: `{row[Config.STAGE1_TARGET_COL]}`")
-            with st.expander("Raw generated output"):
+            with st.expander("Class score details"):
                 st.code(raw)
 
     with tab2:
@@ -181,7 +164,7 @@ def main() -> None:
             )
             st.success(f"Predicted: **{pred2}**")
             st.write(f"Ground truth: `{row2[Config.STAGE2_TARGET_COL]}`")
-            with st.expander("Raw generated output"):
+            with st.expander("Class score details"):
                 st.code(raw2)
 
     with tab3:
@@ -222,7 +205,7 @@ def main() -> None:
                 Config.STAGE1_CLASSES,
             )
             st.info(f"Stage 1 prediction: **{pred1}**")
-            with st.expander("Stage 1 raw output"):
+            with st.expander("Stage 1 class score details"):
                 st.code(raw1)
 
             if pred1 != Config.STAGE1_POSITIVE_LABEL:
@@ -240,7 +223,7 @@ def main() -> None:
                         Config.STAGE2_CLASSES,
                     )
                     st.success(f"Stage 2 prediction: **{pred2}**")
-                    with st.expander("Stage 2 raw output"):
+                    with st.expander("Stage 2 class score details"):
                         st.code(raw2)
 
 
