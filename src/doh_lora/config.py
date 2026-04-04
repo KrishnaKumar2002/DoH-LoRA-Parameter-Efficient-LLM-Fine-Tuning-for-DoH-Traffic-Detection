@@ -4,10 +4,57 @@ Centralizes all configuration constants and environment settings.
 """
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import torch
+
+
+@dataclass(frozen=True)
+class OptimizationConfig:
+    use_mixed_precision: bool = True
+    use_flash_attention: bool = True
+    use_gradient_checkpointing_advanced: bool = True
+    use_qat: bool = False
+    use_knowledge_distillation: bool = False
+    use_dynamic_token_pruning: bool = False
+    use_adaptive_lr_scheduling: bool = True
+    adaptive_lr_patience: int = 3
+    adaptive_lr_factor: float = 0.5
+    kd_temperature: float = 4.0
+    kd_alpha: float = 0.7
+    token_pruning_ratio: float = 0.3
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    base_model: str = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    lora_r: int = 8
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    lora_target_modules: list = None
+
+
+@dataclass(frozen=True)
+class TrainingConfig:
+    batch_size: int = 1
+    grad_accum: int = 8
+    learning_rate: float = 2e-4
+    epochs: int = 1
+    warmup_ratio: float = 0.03
+    lr_scheduler: str = "cosine"
+    weight_decay: float = 0.0
+    max_grad_norm: float = 1.0
+
+
+@dataclass(frozen=True)
+class InferenceConfig:
+    max_length: int = 256
+    batch_size_eval: int = 8
+    num_beams: int = 1
+    do_sample: bool = False
+    inference_strategy: str = "label_scoring"
 
 
 class Config:
@@ -91,6 +138,14 @@ class Config:
     USE_CACHE_EVAL: bool = True
     CUDNN_BENCHMARK: bool = True
 
+    OPTIMIZATION_CONFIG: OptimizationConfig = OptimizationConfig()
+    MODEL_CONFIG: ModelConfig = ModelConfig(
+        base_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        lora_target_modules=["q_proj", "v_proj"],
+    )
+    TRAINING_CONFIG: TrainingConfig = TrainingConfig()
+    INFERENCE_CONFIG: InferenceConfig = InferenceConfig()
+
     # ============ TURBOQUANT COMPRESSION ============
     USE_TURBOQUANT: bool = True
     TURBOQUANT_BITS: int = 4
@@ -140,4 +195,8 @@ class Config:
             "turboquant": cls.USE_TURBOQUANT,
             "turboquant_bits": cls.TURBOQUANT_BITS,
             "turboquant_block_size": cls.TURBOQUANT_BLOCK_SIZE,
+            "use_mixed_precision": cls.USE_MIXED_PRECISION,
+            "use_flash_attention": cls.USE_FLASH_ATTENTION,
+            "use_gradient_checkpointing_advanced": cls.USE_GRADIENT_CHECKPOINTING_ADVANCED,
+            "use_adaptive_lr_scheduling": cls.USE_ADAPTIVE_LR_SCHEDULING,
         }
