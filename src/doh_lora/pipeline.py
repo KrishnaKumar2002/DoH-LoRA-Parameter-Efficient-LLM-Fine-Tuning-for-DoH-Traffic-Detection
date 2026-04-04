@@ -13,25 +13,10 @@ from typing import List
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.model_selection import train_test_split
 
 from .config import Config
-from .data import InstructionDataset, read_and_clean, select_numeric_features
-from .evaluation import (
-    batch_predict,
-    compute_efficiency_metrics,
-    compute_metrics,
-    generate_classification_report,
-    plot_confusion_matrix,
-)
-from .model import (
-    build_model_and_tokenizer,
-    cleanup_gpu_memory,
-    get_trainable_params,
-    save_adapter,
-    train_model,
-)
-from .utils import normalize_label_space
+from .data import read_and_clean, select_numeric_features
+from .services import StageExecutor
 
 # Setup logging
 logging.basicConfig(
@@ -77,184 +62,25 @@ def train_and_evaluate_task(
     max_len: int = Config.MAX_LENGTH,
 ) -> dict:
     """
-    Train and evaluate a single classification task.
-
-    Args:
-        df: Input DataFrame
-        target_col: Name of target column
-        feature_cols: List of feature column names
-        task_name: Name of task for reporting
-        classes: List of valid class labels
-        output_dir: Output directory for results
-        positive_label: Label to treat as positive for metrics
-        test_size: Train/test split ratio
-        epochs: Number of training epochs
-        lr: Learning rate
-        batch_size: Batch size
-        grad_accum: Gradient accumulation steps
-        max_len: Maximum sequence length
-
-    Returns:
-        Dictionary of metrics and metadata.
+    Train and evaluate a single classification task using a stage executor.
     """
-    logger.info(f"Starting task: {task_name}")
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Prepare data
-    df = df.copy()
-    df[target_col] = normalize_label_space(df[target_col], classes)
-    df = df.dropna(subset=[target_col]).reset_index(drop=True)
-    logger.info(f"Task {task_name} - Total samples: {len(df)}")
-
-    # Split data
-    train_df, test_df = train_test_split(
-        df,
-        test_size=test_size,
-        random_state=Config.SEED,
-        stratify=df[target_col] if Config.STRATIFY else None,
-    )
-
-    logger.info(
-        f"Task {task_name} - Train: {len(train_df)}, Test: {len(test_df)}"
-    )
-
-    # Build model
-    logger.info(f"Task {task_name} - Building model: {Config.BASE_MODEL}")
-    model, tokenizer = build_model_and_tokenizer()
-
-    # Create datasets
-    train_ds = InstructionDataset(
-        train_df,
-        feature_cols,
-        target_col,
-        task_name,
-        classes,
-        tokenizer,
-        max_len=max_len,
-    )
-    test_ds = InstructionDataset(
-        test_df,
-        feature_cols,
-        target_col,
-        task_name,
-        classes,
-        tokenizer,
-        max_len=max_len,
-    )
-
-    # Get parameter counts
-    trainable, total, trainable_pct = get_trainable_params(model)
-    logger.info(
-        f"Task {task_name} - Parameters: {trainable:,} trainable / "
-        f"{total:,} total ({trainable_pct:.2f}%)"
-    )
-
-    # Train
-    logger.info(f"Task {task_name} - Starting training ({epochs} epochs)...")
-    train_sec, train_peak_gb = train_model(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=train_ds,
-        output_dir=output_dir / "checkpoints",
-        epochs=epochs,
-        batch_size=batch_size,
-        grad_accum=grad_accum,
-        lr=lr,
-        device=Config.DEVICE,
-    )
-
-    logger.info(f"Task {task_name} - Training complete ({train_sec:.2f}s)")
-    train_throughput_sps = len(train_df) / train_sec if train_sec > 0 else 0.0
-
-    # Save adapter
-    adapter_dir = output_dir / "adapter"
-    adapter_size_mb = save_adapter(model, tokenizer, adapter_dir)
-    logger.info(f"Task {task_name} - Adapter saved ({adapter_size_mb:.2f} MB)")
-
-    # Evaluate
-    logger.info(f"Task {task_name} - Starting evaluation...")
-    if Config.DEVICE == "cuda":
-        torch.cuda.reset_peak_memory_stats()
-
-    pred_labels, eval_sec, gen_tokens = batch_predict(
-        model=model,
-        tokenizer=tokenizer,
-        df=test_df,
+    executor = StageExecutor()
+    stage_result = executor.run_stage(
+        df=df,
+        target_col=target_col,
         feature_cols=feature_cols,
         task_name=task_name,
         classes=classes,
-        batch_size=Config.BATCH_SIZE_EVAL,
-        max_new_tokens=Config.MAX_NEW_TOKENS,
-        device=Config.DEVICE,
+        output_dir=output_dir,
+        positive_label=positive_label,
+        test_size=test_size,
+        epochs=epochs,
+        lr=lr,
+        batch_size=batch_size,
+        grad_accum=grad_accum,
+        max_len=max_len,
     )
-
-    eval_peak_gb = (
-        (torch.cuda.max_memory_allocated() / 1e9) if Config.DEVICE == "cuda" else None
-    )
-
-    logger.info(f"Task {task_name} - Evaluation complete ({eval_sec:.2f}s)")
-
-    # Compute metrics
-    y_true = test_df[target_col].astype(str).str.strip().str.lower().tolist()
-    y_pred = pred_labels
-
-    metrics = compute_metrics(y_true, y_pred, classes, positive_label)
-    efficiency = compute_efficiency_metrics(
-        len(test_df), eval_sec, gen_tokens, metrics["f1"]
-    )
-
-    logger.info(f"Task {task_name} - F1: {metrics['f1']:.4f}")
-
-    # Generate reports
-    report_path = Config.RESULTS_DIR / f"{task_name}_classification_report.txt"
-    generate_classification_report(y_true, y_pred, classes, str(report_path))
-
-    cm_path = Config.RESULTS_DIR / f"{task_name}_confusion_matrix.png"
-    plot_confusion_matrix(
-        y_true, y_pred, classes, f"{task_name} Confusion Matrix", str(cm_path)
-    )
-
-    # Save predictions
-    pred_df = test_df.copy()
-    pred_df["y_true"] = y_true
-    pred_df["y_pred"] = y_pred
-    pred_df.to_csv(Config.RESULTS_DIR / f"{task_name}_predictions.csv", index=False)
-
-    # Compile metrics row
-    metrics_row = {
-        "task": task_name,
-        "train_rows": len(train_df),
-        "test_rows": len(test_df),
-        "classes": " / ".join(classes),
-        "trainable_params": int(trainable),
-        "total_params": int(total),
-        "trainable_pct": round(trainable_pct, 4),
-        "train_time_sec": round(train_sec, 2),
-        "train_samples_per_sec": round(train_throughput_sps, 4),
-        "train_peak_gpu_gb": round(train_peak_gb, 4) if train_peak_gb else None,
-        "adapter_size_mb": round(adapter_size_mb, 4),
-        "test_accuracy": round(metrics["accuracy"], 4),
-        "test_precision": round(metrics["precision"], 4),
-        "test_recall": round(metrics["recall"], 4),
-        "test_f1": round(metrics["f1"], 4),
-        "eval_time_sec": round(eval_sec, 2),
-        "eval_latency_ms_per_sample": round(efficiency["avg_latency_ms"], 4),
-        "eval_samples_per_sec": round(efficiency["throughput_sps"], 4),
-        "eval_tokens_per_sec": round(efficiency["tokens_per_sec"], 4),
-        "eval_peak_gpu_gb": round(eval_peak_gb, 4) if eval_peak_gb else None,
-        "efficiency_score_f1_per_ms": round(efficiency["efficiency_score_f1_per_ms"], 8),
-        "positive_label": positive_label,
-        "adapter_dir": str(adapter_dir),
-        "confusion_matrix_png": str(cm_path),
-    }
-
-    # Cleanup GPU memory
-    del model, train_ds, test_ds, tokenizer
-    cleanup_gpu_memory()
-
-    logger.info(f"Task {task_name} - Complete")
-    return metrics_row
+    return stage_result.to_dict()
 
 
 def run_pipeline() -> None:

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
+import torch.nn.functional as F
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -52,10 +53,136 @@ def batch_predict(
     Returns:
         Tuple of (predictions, total_time_sec, total_generated_tokens).
     """
+    if Config.INFERENCE_STRATEGY == "generate":
+        return _batch_predict_generate(
+            model=model,
+            tokenizer=tokenizer,
+            df=df,
+            feature_cols=feature_cols,
+            task_name=task_name,
+            classes=classes,
+            batch_size=batch_size,
+            max_new_tokens=max_new_tokens,
+            device=device,
+        )
+    return _batch_predict_label_scoring(
+        model=model,
+        tokenizer=tokenizer,
+        df=df,
+        feature_cols=feature_cols,
+        task_name=task_name,
+        classes=classes,
+        device=device,
+    )
+
+
+def _score_label_logprob(model, tokenizer, prompt: str, label: str, device: str) -> float:
+    """Compute conditional log-probability of a class label given prompt."""
+    prompt_ids = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=Config.MAX_LENGTH,
+        add_special_tokens=False,
+    )["input_ids"].to(device)
+    label_ids = tokenizer(
+        " " + label,
+        return_tensors="pt",
+        add_special_tokens=False,
+    )["input_ids"].to(device)
+
+    full_ids = torch.cat([prompt_ids, label_ids], dim=1)
+    attn = torch.ones_like(full_ids, device=device)
+
+    with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+        logits = model(input_ids=full_ids, attention_mask=attn).logits
+
+    prompt_len = prompt_ids.shape[1]
+    score = 0.0
+    for i in range(label_ids.shape[1]):
+        pos = prompt_len + i - 1
+        token_id = int(label_ids[0, i])
+        token_logp = F.log_softmax(logits[0, pos], dim=-1)[token_id]
+        score += float(token_logp.item())
+    return score
+
+
+def predict_single_label(
+    model,
+    tokenizer,
+    row: pd.Series,
+    feature_cols: List[str],
+    task_name: str,
+    classes: List[str],
+    device: str = Config.DEVICE,
+) -> Tuple[str, dict]:
+    """
+    Predict a class by scoring each allowed label directly.
+
+    Returns:
+        Tuple of (predicted_class, score_map).
+    """
+    model.eval()
+    model.config.use_cache = Config.USE_CACHE_EVAL
+    prompt = build_prompt(row, feature_cols, task_name, classes, target_value=None)
+
+    score_map = {}
+    for label in classes:
+        score_map[label] = _score_label_logprob(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            label=label,
+            device=device,
+        )
+    pred = max(score_map.items(), key=lambda kv: kv[1])[0]
+    return pred, score_map
+
+
+@torch.no_grad()
+def _batch_predict_label_scoring(
+    model,
+    tokenizer,
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    task_name: str,
+    classes: List[str],
+    device: str = Config.DEVICE,
+) -> Tuple[List[str], float, int]:
+    """Fast deterministic classifier using class-label log-prob scoring."""
+    preds = []
+    t0 = time.perf_counter()
+    for _, row in df.iterrows():
+        pred, _ = predict_single_label(
+            model=model,
+            tokenizer=tokenizer,
+            row=row,
+            feature_cols=feature_cols,
+            task_name=task_name,
+            classes=classes,
+            device=device,
+        )
+        preds.append(pred)
+    total_time = time.perf_counter() - t0
+    return preds, total_time, 0
+
+
+@torch.no_grad()
+def _batch_predict_generate(
+    model,
+    tokenizer,
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    task_name: str,
+    classes: List[str],
+    batch_size: int = Config.BATCH_SIZE_EVAL,
+    max_new_tokens: int = Config.MAX_NEW_TOKENS,
+    device: str = Config.DEVICE,
+) -> Tuple[List[str], float, int]:
+    """Original generation-based prediction path (fallback compatibility)."""
     model.eval()
     model.config.use_cache = Config.USE_CACHE_EVAL
 
-    # Build prompts
     texts = [
         build_prompt(row, feature_cols, task_name, classes, target_value=None)
         for _, row in df.iterrows()
@@ -67,7 +194,6 @@ def batch_predict(
 
     for start in range(0, len(texts), batch_size):
         batch_texts = texts[start : start + batch_size]
-
         inputs = tokenizer(
             batch_texts,
             return_tensors="pt",
@@ -75,9 +201,7 @@ def batch_predict(
             truncation=True,
             max_length=Config.MAX_LENGTH,
         ).to(device)
-
         in_len = inputs["input_ids"].shape[1]
-
         t0 = time.perf_counter()
         with torch.cuda.amp.autocast(enabled=(device == "cuda")):
             outputs = model.generate(
@@ -89,13 +213,10 @@ def batch_predict(
             )
         dt = time.perf_counter() - t0
         total_time += dt
-
         total_gen_tokens += int((outputs.shape[1] - in_len) * outputs.shape[0])
-
         for i in range(outputs.shape[0]):
             generated = tokenizer.decode(outputs[i][in_len:], skip_special_tokens=True)
             preds.append(parse_prediction(generated, classes))
-
     return preds, total_time, total_gen_tokens
 
 
