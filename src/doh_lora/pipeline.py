@@ -31,7 +31,16 @@ from .model import (
     save_adapter,
     train_model,
 )
+from .turboquant import create_turboquant_adapter
 from .utils import normalize_label_space
+from .visualization import (
+    init_training_visualizer,
+    log_training_step,
+    plot_parameter_efficiency,
+    plot_training_curves,
+    plot_turboquant_compression_stats,
+    save_training_history,
+)
 
 # Setup logging
 logging.basicConfig(
@@ -248,6 +257,42 @@ def train_and_evaluate_task(
         "adapter_dir": str(adapter_dir),
         "confusion_matrix_png": str(cm_path),
     }
+
+    # Generate visualizations
+    logger.info(f"Task {task_name} - Generating visualizations...")
+    
+    # Parameter efficiency visualization
+    plot_parameter_efficiency(
+        trainable_params=trainable,
+        total_params=total,
+        task_name=task_name,
+        output_dir=output_dir,
+        lora_r=Config.LORA_R,
+        adapter_size_mb=adapter_size_mb,
+        turboquant_size_mb=None,  # Will be computed separately if TurboQuant enabled
+    )
+    
+    # If TurboQuant is enabled and was applied, create compression stats visualization
+    if Config.USE_TURBOQUANT:
+        turboquant_dir = output_dir / "turboquant"
+        if turboquant_dir.exists():
+            turboquant_size_mb = sum(f.stat().st_size for f in turboquant_dir.rglob("*") if f.is_file()) / 1024 / 1024
+            original_size_mb = adapter_size_mb
+            compression_ratio = original_size_mb / turboquant_size_mb if turboquant_size_mb > 0 else 1.0
+            
+            plot_turboquant_compression_stats(
+                task_name=task_name,
+                original_size_mb=original_size_mb,
+                compressed_size_mb=turboquant_size_mb,
+                compression_ratio=compression_ratio,
+                bits=Config.TURBOQUANT_BITS,
+                residual_bits=Config.TURBOQUANT_RESIDUAL_BITS,
+                output_dir=output_dir,
+            )
+            
+            metrics_row["turboquant_size_mb"] = round(turboquant_size_mb, 4)
+            metrics_row["compression_ratio"] = round(compression_ratio, 2)
+            logger.info(f"Task {task_name} - TurboQuant compression: {original_size_mb:.2f}MB → {turboquant_size_mb:.2f}MB ({compression_ratio:.2f}x)")
 
     # Cleanup GPU memory
     del model, train_ds, test_ds, tokenizer
