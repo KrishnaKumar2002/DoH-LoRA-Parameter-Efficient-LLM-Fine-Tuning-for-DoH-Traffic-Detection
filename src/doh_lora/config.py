@@ -98,6 +98,24 @@ class Config:
     TURBOQUANT_BLOCK_SIZE: int = 256
     TURBOQUANT_SEED: int = SEED
 
+    # ============ ADVANCED OPTIMIZATION ============
+    USE_MIXED_PRECISION: bool = True  # Automatic mixed precision (AMP)
+    USE_FLASH_ATTENTION: bool = True  # Flash Attention for faster inference
+    USE_GRADIENT_CHECKPOINTING_ADVANCED: bool = True  # Memory-efficient training
+    USE_QAT: bool = False  # Quantization-Aware Training (experimental)
+    USE_KNOWLEDGE_DISTILLATION: bool = False  # KD from larger model
+    USE_DYNAMIC_TOKEN_PRUNING: bool = False  # Prune unimportant tokens
+    USE_ADAPTIVE_LR_SCHEDULING: bool = True  # Adaptive learning rate
+    ADAPTIVE_LR_PATIENCE: int = 3
+    ADAPTIVE_LR_FACTOR: float = 0.5
+    
+    # KD settings (if enabled)
+    KD_TEMPERATURE: float = 4.0
+    KD_ALPHA: float = 0.7
+    
+    # Token pruning settings (if enabled)
+    TOKEN_PRUNING_RATIO: float = 0.3
+
     @classmethod
     def ensure_dirs(cls) -> None:
         """Create all required directories if they don't exist."""
