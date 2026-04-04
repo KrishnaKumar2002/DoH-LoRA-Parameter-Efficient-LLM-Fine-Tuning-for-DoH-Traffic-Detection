@@ -1,5 +1,10 @@
 # DoH-LoRA: Parameter-Efficient Fine-Tuning for DoH Traffic Detection
 
+[![CI](https://github.com/KrishnaKumar2002/DoH-LoRA-Parameter-Efficient-LLM-Fine-Tuning-for-DoH-Traffic-Detection/actions/workflows/ci.yml/badge.svg)](https://github.com/KrishnaKumar2002/DoH-LoRA-Parameter-Efficient-LLM-Fine-Tuning-for-DoH-Traffic-Detection/actions/workflows/ci.yml)
+[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=flat&logo=docker&logoColor=white)](https://docker.com)
+
 A production-ready Python framework for fine-tuning small language models using **LoRA** (Low-Rank Adaptation) to detect DNS-over-HTTPS (DoH) traffic and classify malicious network flows. Designed for efficient inference on resource-constrained devices.
 
 ---
@@ -103,6 +108,18 @@ Network Traffic Data
    ```bash
    python -m src.doh_lora.main
    ```
+
+### Docker Usage
+
+Build and run with Docker:
+
+```bash
+# Build image
+docker build -t doh-lora .
+
+# Run container (mount data directory)
+docker run -v $(pwd)/data:/app/data -v $(pwd)/results:/app/results doh-lora
+```
 
 ---
 
@@ -332,26 +349,42 @@ efficiency_score_f1_per_ms              0.077
 
 ## 🔧 Development
 
+### Quick Setup
+
+```bash
+# Install dependencies and setup environment
+make setup
+make install-dev
+
+# Run pre-commit hooks
+pip install pre-commit
+pre-commit install
+```
+
 ### Run Tests
 
 ```bash
-pytest tests/
+make test
 ```
 
 ### Code Quality
 
 ```bash
-# Format code
+# Format and lint all at once
+make format
+make lint
+
+# Or individually
 black src/
-
-# Sort imports
 isort src/
-
-# Lint
 flake8 src/
-
-# Type check
 mypy src/
+```
+
+### Run Pipeline
+
+```bash
+make run
 ```
 
 ### Adding New Features
@@ -359,7 +392,7 @@ mypy src/
 1. Create new module in `src/doh_lora/`
 2. Add tests in `tests/`
 3. Update documentation
-4. Ensure all tests pass
+4. Ensure all tests pass: `make test`
 
 ---
 
