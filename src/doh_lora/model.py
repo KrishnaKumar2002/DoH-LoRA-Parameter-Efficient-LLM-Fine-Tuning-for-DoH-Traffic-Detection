@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 from .config import Config
 from .turboquant import create_turboquant_adapter
 from .utils import build_prompt
+from .advanced_optimization import (
+    AdaptiveLearningRateScheduler,
+    MixedPrecisionOptimizer,
+    enable_flash_attention,
+    enable_gradient_checkpointing_advanced,
+)
 
 
 def build_model_and_tokenizer(
@@ -103,6 +109,21 @@ def build_model_and_tokenizer(
 
     model = get_peft_model(model, lora_config)
     
+    # Enable advanced optimization techniques
+    if Config.USE_FLASH_ATTENTION:
+        try:
+            enable_flash_attention(model)
+            logger.info("Flash Attention enabled for faster inference")
+        except Exception as e:
+            logger.warning(f"Could not enable Flash Attention: {e}")
+    
+    if Config.USE_GRADIENT_CHECKPOINTING_ADVANCED:
+        try:
+            enable_gradient_checkpointing_advanced(model)
+            logger.info("Advanced gradient checkpointing enabled for memory efficiency")
+        except Exception as e:
+            logger.warning(f"Could not enable advanced gradient checkpointing: {e}")
+    
     if device == "cuda" and not load_in_8bit:
         model.to(device)
 
@@ -158,7 +179,7 @@ def train_model(
 
     model.config.use_cache = Config.USE_CACHE_TRAINING
 
-    # Training arguments
+    # Training arguments with mixed precision support
     train_args = TrainingArguments(
         output_dir=str(output_dir / "checkpoints"),
         per_device_train_batch_size=batch_size,
@@ -170,7 +191,7 @@ def train_model(
         logging_steps=1,
         save_strategy="no",
         report_to="none",
-        fp16=(device == "cuda"),
+        fp16=(device == "cuda" and Config.USE_MIXED_PRECISION),
         bf16=False,
         optim="adamw_torch",
         dataloader_pin_memory=(device == "cuda"),
