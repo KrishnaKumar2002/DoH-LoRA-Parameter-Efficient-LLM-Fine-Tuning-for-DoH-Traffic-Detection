@@ -179,6 +179,20 @@ def train_model(
 
     model.config.use_cache = Config.USE_CACHE_TRAINING
 
+    # Log enabled optimizations
+    optimizations_enabled = []
+    if Config.USE_MIXED_PRECISION:
+        optimizations_enabled.append("Mixed Precision (FP16)")
+    if Config.USE_FLASH_ATTENTION:
+        optimizations_enabled.append("Flash Attention")
+    if Config.USE_GRADIENT_CHECKPOINTING_ADVANCED:
+        optimizations_enabled.append("Advanced Gradient Checkpointing")
+    if Config.USE_ADAPTIVE_LR_SCHEDULING:
+        optimizations_enabled.append("Adaptive Learning Rate")
+    
+    if optimizations_enabled:
+        logger.info(f"Advanced optimizations enabled: {', '.join(optimizations_enabled)}")
+    
     # Training arguments with mixed precision support
     train_args = TrainingArguments(
         output_dir=str(output_dir / "checkpoints"),
