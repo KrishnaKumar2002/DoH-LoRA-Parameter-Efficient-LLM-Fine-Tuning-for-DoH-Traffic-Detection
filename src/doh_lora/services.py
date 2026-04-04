@@ -9,25 +9,14 @@ import torch
 
 from .config import Config
 from .data import InstructionDataset
+from .evaluation import (batch_predict, compute_efficiency_metrics,
+                         compute_metrics, generate_classification_report,
+                         plot_confusion_matrix)
+from .model import (build_model_and_tokenizer, cleanup_gpu_memory,
+                    get_trainable_params, save_adapter, train_model)
 from .utils import normalize_label_space
-from .evaluation import (
-    batch_predict,
-    compute_efficiency_metrics,
-    compute_metrics,
-    generate_classification_report,
-    plot_confusion_matrix,
-)
-from .model import (
-    build_model_and_tokenizer,
-    cleanup_gpu_memory,
-    get_trainable_params,
-    save_adapter,
-    train_model,
-)
-from .visualization import (
-    plot_parameter_efficiency,
-    plot_turboquant_compression_stats,
-)
+from .visualization import (plot_parameter_efficiency,
+                            plot_turboquant_compression_stats)
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +152,9 @@ class StageExecutor:
         )
 
         eval_peak_gb = (
-            (torch.cuda.max_memory_allocated() / 1e9) if self.config.DEVICE == "cuda" else None
+            (torch.cuda.max_memory_allocated() / 1e9)
+            if self.config.DEVICE == "cuda"
+            else None
         )
         logger.info(f"Task {task_name} - Evaluation complete ({eval_sec:.2f}s)")
 
@@ -171,7 +162,9 @@ class StageExecutor:
         y_pred = pred_labels
 
         metrics = compute_metrics(y_true, y_pred, classes, positive_label)
-        efficiency = compute_efficiency_metrics(len(test_df), eval_sec, gen_tokens, metrics["f1"])
+        efficiency = compute_efficiency_metrics(
+            len(test_df), eval_sec, gen_tokens, metrics["f1"]
+        )
         logger.info(f"Task {task_name} - F1: {metrics['f1']:.4f}")
 
         report_path = self.config.RESULTS_DIR / f"{task_name}_classification_report.txt"
@@ -185,19 +178,29 @@ class StageExecutor:
         pred_df = test_df.copy()
         pred_df["y_true"] = y_true
         pred_df["y_pred"] = y_pred
-        pred_df.to_csv(self.config.RESULTS_DIR / f"{task_name}_predictions.csv", index=False)
+        pred_df.to_csv(
+            self.config.RESULTS_DIR / f"{task_name}_predictions.csv", index=False
+        )
 
         turboquant_size_mb = None
         compression_ratio = None
         if self.config.USE_TURBOQUANT:
             turboquant_dir = output_dir / "turboquant"
             if turboquant_dir.exists():
-                turboquant_size_mb = sum(
-                    f.stat().st_size for f in turboquant_dir.rglob("*") if f.is_file()
-                ) / 1024 / 1024
+                turboquant_size_mb = (
+                    sum(
+                        f.stat().st_size
+                        for f in turboquant_dir.rglob("*")
+                        if f.is_file()
+                    )
+                    / 1024
+                    / 1024
+                )
                 original_size_mb = adapter_size_mb
                 compression_ratio = (
-                    original_size_mb / turboquant_size_mb if turboquant_size_mb > 0 else 1.0
+                    original_size_mb / turboquant_size_mb
+                    if turboquant_size_mb > 0
+                    else 1.0
                 )
 
                 plot_turboquant_compression_stats(
@@ -252,12 +255,18 @@ class StageExecutor:
             eval_samples_per_sec=round(efficiency["throughput_sps"], 4),
             eval_tokens_per_sec=round(efficiency["tokens_per_sec"], 4),
             eval_peak_gpu_gb=round(eval_peak_gb, 4) if eval_peak_gb else None,
-            efficiency_score_f1_per_ms=round(efficiency["efficiency_score_f1_per_ms"], 8),
+            efficiency_score_f1_per_ms=round(
+                efficiency["efficiency_score_f1_per_ms"], 8
+            ),
             positive_label=positive_label,
             adapter_dir=str(adapter_dir),
             confusion_matrix_png=str(cm_path),
-            turboquant_size_mb=round(turboquant_size_mb, 4) if turboquant_size_mb else None,
-            compression_ratio=round(compression_ratio, 2) if compression_ratio else None,
+            turboquant_size_mb=(
+                round(turboquant_size_mb, 4) if turboquant_size_mb else None
+            ),
+            compression_ratio=(
+                round(compression_ratio, 2) if compression_ratio else None
+            ),
         )
 
     def _train_test_split(self, df, target_col: str, test_size: float):

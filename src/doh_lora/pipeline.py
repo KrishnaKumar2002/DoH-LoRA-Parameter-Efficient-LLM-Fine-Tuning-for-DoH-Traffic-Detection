@@ -102,7 +102,7 @@ def run_pipeline() -> None:
     setup_environment()
 
     # Log configuration
-    logger.info(f"Configuration Summary:")
+    logger.info("Configuration Summary:")
     for key, val in Config.get_summary().items():
         logger.info(f"  {key}: {val}")
 
@@ -120,9 +120,13 @@ def run_pipeline() -> None:
     df_stage2 = read_and_clean(Config.SECOND_LAYER_CSV, Config.STAGE2_TARGET_COL)
 
     logger.info(f"Stage 1 shape: {df_stage1.shape}")
-    logger.info(f"Stage 1 labels: {df_stage1[Config.STAGE1_TARGET_COL].value_counts().to_dict()}")
+    logger.info(
+        f"Stage 1 labels: {df_stage1[Config.STAGE1_TARGET_COL].value_counts().to_dict()}"
+    )
     logger.info(f"Stage 2 shape: {df_stage2.shape}")
-    logger.info(f"Stage 2 labels: {df_stage2[Config.STAGE2_TARGET_COL].value_counts().to_dict()}")
+    logger.info(
+        f"Stage 2 labels: {df_stage2[Config.STAGE2_TARGET_COL].value_counts().to_dict()}"
+    )
 
     # Select features
     features_stage1 = select_numeric_features(
@@ -197,7 +201,7 @@ def run_pipeline() -> None:
         "- All metrics are computed on held-out test splits",
         "- Training efficiency measured by samples/second throughput",
         "- Inference efficiency measured by latency and throughput",
-        f"- LoRA adapter size: Compact adapter outputs saved in results/",
+        "- LoRA adapter size: Compact adapter outputs saved in results/",
         "",
     ]
 

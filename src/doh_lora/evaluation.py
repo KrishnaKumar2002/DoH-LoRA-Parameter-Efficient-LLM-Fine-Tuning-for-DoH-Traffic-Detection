@@ -11,14 +11,9 @@ import pandas as pd
 import seaborn as sns
 import torch
 import torch.nn.functional as F
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-)
+from sklearn.metrics import (accuracy_score, classification_report,
+                             confusion_matrix, f1_score, precision_score,
+                             recall_score)
 
 from .config import Config
 from .utils import build_prompt, parse_prediction
@@ -76,7 +71,9 @@ def batch_predict(
     )
 
 
-def _score_label_logprob(model, tokenizer, prompt: str, label: str, device: str) -> float:
+def _score_label_logprob(
+    model, tokenizer, prompt: str, label: str, device: str
+) -> float:
     """Compute conditional log-probability of a class label given prompt."""
     prompt_ids = tokenizer(
         prompt,
@@ -89,7 +86,9 @@ def _score_label_logprob(model, tokenizer, prompt: str, label: str, device: str)
         " " + label,
         return_tensors="pt",
         add_special_tokens=False,
-    )["input_ids"].to(device)
+    )[
+        "input_ids"
+    ].to(device)
 
     full_ids = torch.cat([prompt_ids, label_ids], dim=1)
     attn = torch.ones_like(full_ids, device=device)

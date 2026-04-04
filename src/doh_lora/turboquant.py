@@ -46,7 +46,9 @@ def _inverse_perm(x: np.ndarray, perm: np.ndarray) -> np.ndarray:
     return restored
 
 
-def _quantize_blocks(rotated: np.ndarray, bits: int, block_size: int) -> Tuple[np.ndarray, np.ndarray]:
+def _quantize_blocks(
+    rotated: np.ndarray, bits: int, block_size: int
+) -> Tuple[np.ndarray, np.ndarray]:
     levels = (2 ** (bits - 1)) - 1
     q = np.empty_like(rotated, dtype=np.int16 if bits <= 8 else np.int32)
     scales = []
@@ -62,7 +64,9 @@ def _quantize_blocks(rotated: np.ndarray, bits: int, block_size: int) -> Tuple[n
     return q, np.asarray(scales, dtype=np.float32)
 
 
-def _dequantize_blocks(q: np.ndarray, scales: np.ndarray, block_size: int) -> np.ndarray:
+def _dequantize_blocks(
+    q: np.ndarray, scales: np.ndarray, block_size: int
+) -> np.ndarray:
     out = np.empty(q.shape[0], dtype=np.float32)
     for i, start in enumerate(range(0, q.size, block_size)):
         end = min(start + block_size, q.size)
@@ -70,7 +74,9 @@ def _dequantize_blocks(q: np.ndarray, scales: np.ndarray, block_size: int) -> np
     return out
 
 
-def _qjl_residual(original: np.ndarray, recovered: np.ndarray, block_size: int) -> Tuple[np.ndarray, np.ndarray]:
+def _qjl_residual(
+    original: np.ndarray, recovered: np.ndarray, block_size: int
+) -> Tuple[np.ndarray, np.ndarray]:
     err = original - recovered
     sign = (err >= 0).astype(np.uint8)  # 1-bit conceptual representation
     amp = []
@@ -81,7 +87,9 @@ def _qjl_residual(original: np.ndarray, recovered: np.ndarray, block_size: int) 
     return sign, np.asarray(amp, dtype=np.float32)
 
 
-def _apply_qjl_residual(recovered: np.ndarray, sign: np.ndarray, amp: np.ndarray, block_size: int) -> np.ndarray:
+def _apply_qjl_residual(
+    recovered: np.ndarray, sign: np.ndarray, amp: np.ndarray, block_size: int
+) -> np.ndarray:
     corrected = recovered.copy()
     for i, start in enumerate(range(0, corrected.size, block_size)):
         end = min(start + block_size, corrected.size)
@@ -90,7 +98,9 @@ def _apply_qjl_residual(recovered: np.ndarray, sign: np.ndarray, amp: np.ndarray
     return corrected
 
 
-def create_turboquant_adapter(state_dict: Dict[str, torch.Tensor], output_dir: Path) -> float:
+def create_turboquant_adapter(
+    state_dict: Dict[str, torch.Tensor], output_dir: Path
+) -> float:
     """Compress LoRA tensors and persist TurboQuant payload.
 
     Returns:
@@ -115,7 +125,9 @@ def create_turboquant_adapter(state_dict: Dict[str, torch.Tensor], output_dir: P
         safe = _to_safe_key(key)
         perm = _make_perm(arr.size, key, Config.TURBOQUANT_SEED)
         rotated = _apply_perm(arr, perm)
-        q, scales = _quantize_blocks(rotated, Config.TURBOQUANT_BITS, Config.TURBOQUANT_BLOCK_SIZE)
+        q, scales = _quantize_blocks(
+            rotated, Config.TURBOQUANT_BITS, Config.TURBOQUANT_BLOCK_SIZE
+        )
 
         recovered_rot = _dequantize_blocks(q, scales, Config.TURBOQUANT_BLOCK_SIZE)
         recovered = _inverse_perm(recovered_rot, perm)
@@ -148,7 +160,9 @@ def create_turboquant_adapter(state_dict: Dict[str, torch.Tensor], output_dir: P
         "tensors": len(index),
         "original_size_mb": round(total_original_bytes / 1e6, 6),
         "compressed_size_mb": round(compressed_bytes / 1e6, 6),
-        "compression_ratio": round((total_original_bytes / max(compressed_bytes, 1)), 4),
+        "compression_ratio": round(
+            (total_original_bytes / max(compressed_bytes, 1)), 4
+        ),
     }
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return float(compressed_bytes) / 1024.0 / 1024.0
@@ -172,7 +186,9 @@ def decompress_turboquant_adapter(npz_path: Path) -> Dict[str, torch.Tensor]:
 
         recovered_rot = _dequantize_blocks(q, scales, Config.TURBOQUANT_BLOCK_SIZE)
         recovered = _inverse_perm(recovered_rot, perm)
-        corrected = _apply_qjl_residual(recovered, sign, amp, Config.TURBOQUANT_BLOCK_SIZE)
+        corrected = _apply_qjl_residual(
+            recovered, sign, amp, Config.TURBOQUANT_BLOCK_SIZE
+        )
 
         restored[name] = torch.from_numpy(corrected.reshape(shape)).to(torch.float32)
 

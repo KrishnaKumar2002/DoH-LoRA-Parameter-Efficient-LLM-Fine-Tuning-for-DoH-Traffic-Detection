@@ -6,7 +6,6 @@ Centralizes all configuration constants and environment settings.
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import torch
 
@@ -163,11 +162,11 @@ class Config:
     USE_ADAPTIVE_LR_SCHEDULING: bool = True  # Adaptive learning rate
     ADAPTIVE_LR_PATIENCE: int = 3
     ADAPTIVE_LR_FACTOR: float = 0.5
-    
+
     # KD settings (if enabled)
     KD_TEMPERATURE: float = 4.0
     KD_ALPHA: float = 0.7
-    
+
     # Token pruning settings (if enabled)
     TOKEN_PRUNING_RATIO: float = 0.3
 

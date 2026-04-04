@@ -12,26 +12,19 @@ from typing import List, Optional, Tuple
 
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    Trainer,
-    TrainingArguments,
-    default_data_collator,
-)
+from transformers import (AutoModelForCausalLM, AutoTokenizer,
+                          BitsAndBytesConfig, Trainer, TrainingArguments,
+                          default_data_collator)
 
 logger = logging.getLogger(__name__)
 
+from .advanced_optimization import (AdaptiveLearningRateScheduler,
+                                    MixedPrecisionOptimizer,
+                                    enable_flash_attention,
+                                    enable_gradient_checkpointing_advanced)
 from .config import Config
 from .turboquant import create_turboquant_adapter
 from .utils import build_prompt
-from .advanced_optimization import (
-    AdaptiveLearningRateScheduler,
-    MixedPrecisionOptimizer,
-    enable_flash_attention,
-    enable_gradient_checkpointing_advanced,
-)
 
 
 class ModelBuilder:
@@ -108,9 +101,7 @@ class ModelBuilder:
                     "Advanced gradient checkpointing enabled for memory efficiency"
                 )
             except Exception as e:
-                logger.warning(
-                    f"Could not enable advanced gradient checkpointing: {e}"
-                )
+                logger.warning(f"Could not enable advanced gradient checkpointing: {e}")
 
         if self.device == "cuda" and not load_in_8bit:
             model.to(self.device)
@@ -136,10 +127,11 @@ def build_model_and_tokenizer(
     # Prepare quantization config if on GPU
     quantization_config = None
     load_in_8bit = False
-    
+
     if use_8bit_quantization and device == "cuda":
         try:
             import bitsandbytes
+
             quantization_config = BitsAndBytesConfig(
                 load_in_8bit=True,
                 llm_int8_threshold=6.0,
@@ -154,7 +146,7 @@ def build_model_and_tokenizer(
     model_kwargs = {
         "low_cpu_mem_usage": True,
     }
-    
+
     if load_in_8bit:
         model_kwargs["quantization_config"] = quantization_config
     else:
@@ -181,7 +173,7 @@ def build_model_and_tokenizer(
     )
 
     model = get_peft_model(model, lora_config)
-    
+
     # Enable advanced optimization techniques
     if Config.USE_FLASH_ATTENTION:
         try:
@@ -189,14 +181,14 @@ def build_model_and_tokenizer(
             logger.info("Flash Attention enabled for faster inference")
         except Exception as e:
             logger.warning(f"Could not enable Flash Attention: {e}")
-    
+
     if Config.USE_GRADIENT_CHECKPOINTING_ADVANCED:
         try:
             enable_gradient_checkpointing_advanced(model)
             logger.info("Advanced gradient checkpointing enabled for memory efficiency")
         except Exception as e:
             logger.warning(f"Could not enable advanced gradient checkpointing: {e}")
-    
+
     if device == "cuda" and not load_in_8bit:
         model.to(device)
 
@@ -262,10 +254,12 @@ def train_model(
         optimizations_enabled.append("Advanced Gradient Checkpointing")
     if Config.USE_ADAPTIVE_LR_SCHEDULING:
         optimizations_enabled.append("Adaptive Learning Rate")
-    
+
     if optimizations_enabled:
-        logger.info(f"Advanced optimizations enabled: {', '.join(optimizations_enabled)}")
-    
+        logger.info(
+            f"Advanced optimizations enabled: {', '.join(optimizations_enabled)}"
+        )
+
     # Training arguments with mixed precision support
     train_args = TrainingArguments(
         output_dir=str(output_dir / "checkpoints"),
@@ -303,7 +297,9 @@ def train_model(
     train_sec = time.perf_counter() - t0
 
     # Capture peak GPU memory
-    peak_gpu_gb = (torch.cuda.max_memory_allocated() / 1e9) if device == "cuda" else None
+    peak_gpu_gb = (
+        (torch.cuda.max_memory_allocated() / 1e9) if device == "cuda" else None
+    )
 
     return train_sec, peak_gpu_gb
 
@@ -327,7 +323,9 @@ def save_adapter(model, tokenizer, output_dir: Path) -> float:
     tokenizer.save_pretrained(str(output_dir))
 
     if Config.USE_TURBOQUANT:
-        turboquant_size_mb = create_turboquant_adapter(model.state_dict(), output_dir / "turboquant")
+        turboquant_size_mb = create_turboquant_adapter(
+            model.state_dict(), output_dir / "turboquant"
+        )
         logger.info(f"TurboQuant adapter saved ({turboquant_size_mb:.2f} MB)")
     else:
         turboquant_size_mb = 0.0
